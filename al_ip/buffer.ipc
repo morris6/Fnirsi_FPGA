@@ -17,7 +17,7 @@
     </MemoryType>
     <PortAOption>
         <mode_a>WRITETHROUGH</mode_a>
-        <depth_a>8192</depth_a>
+        <depth_a>4096</depth_a>
         <width_a>8</width_a>
         <register_a>None</register_a>
         <enable_a>disable</enable_a>
