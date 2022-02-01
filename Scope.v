@@ -1,12 +1,12 @@
 // As far as wanted / needed replicating the FPGA in the scope.
 // We 're now at Scope11. Sofar:
 // command	0x01,  1, reset - go ?
-// command	0x05,  5, wait until ready, readback
+// command	0x05,  5, wait until ready, read by mcu
 // command 	0x06,  6, fpga ident 0x1432, 5470
 // command	0x0D, 13, sample rate, with interleaved A and B channel
 // command 	0x0E, 14, multiple byte debug
-// command	0x20, 32, read buffer adc's channel 1
-// command	0x22, 34, read buffer adc's channel 2
+// command	0x20, 32, mcu read buffer adc's channel 1
+// command	0x22, 34, mcu read buffer adc's channel 2
 // command	0x32, 50, offset channel 1
 // command 	0x33, 51, relay control channel 1
 // 			0x34, 52, ac/dc control channel 1
@@ -22,7 +22,9 @@
 // pwm timers for offset from xtal 50 MHz, runs at 24.4 kHz
 // pwm timer for backlight from 6400kHz, runs at 25 kHz
 
-// buffer memories for adc's
+// buffer memories for adc's, both adc's data of a channel are stored 
+// simultainiously in two 8 bit wide buffers.
+// read out by mcu as alternated 8 bit wide results.
 
 // acquisition system after writing settings;
 // 1- mcu commands reset.
@@ -35,7 +37,10 @@
 // 		fpga sets ready flag.
 // 4- mcu finds ready flag set and can start reading the buffers.
 
-//
+// the adc's are pin selected to have A and B data aligned.
+// channel buffer is 2 x 8 bits wide, 4096 deep.
+// read back by mcu alternates between A and B 8 bits.
+//  
 // this is the top module, connecting to fpga pin connections.
 
 module Scope(	input	wire			i_xtal,			// 50 MHz clock
@@ -78,9 +83,9 @@ reg 		[1:0]	data_index;
 // command 0x01, 1 reset - go ?
 reg				reset; // 0- hold, 1- go
 // command 0x05, 5 check ready flag
-reg		[1:0]	ready; // 00- busy, 01- ready(A), 11-ready(B)
+reg		[1:0]	ready; // 00- busy, 01- ready(trigger in A), 11-ready(B)
 // command 0x0A,10 sampling ready flag
-reg				sampling_done;
+reg				sampling_done; // ?
 // command 0x0D,13 sample rate value
 reg		[7:0]	sample_rate_byte[3:0];
 // command 0x0E,14 register array for debug
@@ -275,8 +280,8 @@ wire				addr_clk_mcu;
 wire				addr_clk_adc;
 assign addr_clk_adc	= ( state == 0 )? addr_clk_mcu : adc_rate;
 wire				addr_en;
-reg		[12:0]	addr;
-reg		[12:0]	match_addr;
+reg		[11:0]	addr;
+reg		[11:0]	match_addr;
 // circular address counter
 assign addr_en	= 1'b1;
 always@(posedge addr_clk_adc) if (addr_en) addr <= addr + 1;
@@ -284,28 +289,33 @@ always@(posedge addr_clk_adc) if (addr_en) addr <= addr + 1;
 // control counter, half length
 wire				half_en;
 wire				half_reset;
-reg		[11:0]	half;
+reg		[10:0]	half;
 assign is_half = ( half == 0 )? 1'b1 : 1'b0;
 // combinational logic for trigger match
 wire				match1A;
+wire				match1B;
 
 
-// compare channel 1, adc A
-wire		[7:0]	doa_1;
-assign match1A	= ( doa_1 > trig_level )? 1'b1 : 1'b0;
+// compare channel 1, adc A, B
+wire		[7:0]	doA_1;
+wire		[7:0]	doB_1;
+assign match1A	= ( doA_1 > trig_level )? 1'b1 : 1'b0;
+assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
 
 
-// buffer -----------------------
-	buffer adc1_buffer(	.dia		(i_adc1A_d),
-//						.dib		(i_adc1B_d),
+// buffer channel 1, adc A 
+	buffer adcA1_buffer(	.dia		(i_adc1A_d),
 						.addra	(addr),
-//						.addrb	(addr),
 						.clka	(adc_rate_inv), // delay
-//						.clkb	(adc_rate_inv),
 						.wea		(1'b1),
-//						.web		(1'b1),
-						.doa		(doa_1)
-//						.dob		(dob_1)						
+						.doa		(doA_1)
+					);
+// buffer channel 1, adc B 
+	buffer adcB1_buffer(	.dia		(i_adc1B_d),
+						.addra	(addr),
+						.clka	(adc_rate_inv), // delay
+						.wea		(1'b1),
+						.doa		(doB_1)
 					);
 
 
