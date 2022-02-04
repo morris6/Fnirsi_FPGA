@@ -14,17 +14,16 @@
 // command 	0x36, 54, relay control channel 2
 // 			0x37, 55, ac/dc control channel 2
 // command	0x38, 56, display backlight control
+
+/*************************************************************
+This code is not (YET) taking care of crossing clock domains
+*************************************************************/
   
 // command and bidirectional data register.
 // data index counter handling
-
 // pll for adc clock signals 200MHz
 // pwm timers for offset from xtal 50 MHz, runs at 24.4 kHz
 // pwm timer for backlight from 6400kHz, runs at 25 kHz
-
-// buffer memories for adc's, both adc's data of a channel are stored 
-// simultainiously in two 8 bit wide buffers.
-// read out by mcu as alternated 8 bit wide results.
 
 // acquisition system after writing settings;
 // 1- mcu commands reset.
@@ -118,12 +117,17 @@ reg		[2:0]	relay_ch2; // decode pattern
 reg				ac_dc_2; // 0- AC, 1- DC
 // command 0x38,56 display backlight control
 reg		[7:0]	display; // 0- off, 1-255- brightness
-// 
+
+// prepare data stream for reading by mcu 
+wire		[7:0]	data_stream;
+wire		[7:0]	doA_1;
+wire		[7:0]	doB_1;
 
 // logics for combining data bytes to multi byte registers
-wire	[23:0]	sample_rate;
-wire[15:0]	offset_1;
-wire[15:0]	offset_2;
+wire		[23:0]	sample_rate;
+wire		[15:0]	offset_1;
+wire		[15:0]	offset_2;
+
 // assign sample_rate[31:24]	= sample_rate_byte[0]; // not used
 assign	sample_rate[23:16]	= sample_rate_byte[1];
 assign	sample_rate[15:8]	= sample_rate_byte[2];
@@ -152,6 +156,14 @@ begin
 	if(comm_str) data_index <= 0;
 	else data_index <= data_index+1;	
 end	
+	
+// special for command 0x01, reset - go	
+// can be reset by acquisition complete
+//always@(posedge data_str, posedge ready[0])
+//begin
+//	if(ready[0] == 1'b1) reset <= 1'b0;
+//	else if(command == 8'h01) reset <= io_mcu_d[0];
+//end	
 
 // write by mcu to registers
 always@(posedge data_str)
@@ -174,7 +186,7 @@ case(command)
 	8'h32:  offset_1_byte[data_index] <= io_mcu_d; // 50d		
 	8'h35:  offset_2_byte[data_index] <= io_mcu_d; // 53d		
 // for command 0x33 or 0x36, input scaling, relay control
-	8'h33:  relay_ch1[2:0] <= io_mcu_d[2:0]; // 51d		
+	8'h33:  relay_ch1[2:0] <= io_mcu_d[2:0]; // 51d
 	8'h36:  relay_ch2[2:0] <= io_mcu_d[2:0]; // 54d		
 // for command 0x34 or 0x37, input ac /dc control
 	8'h34:  ac_dc_1 <= io_mcu_d[0];
@@ -193,8 +205,8 @@ case(command)
 			if(data_index == 0) data_out <= 8'h14; // 5170 decimal		
 			else if 	(data_index == 1) data_out <= 8'h32;
 		end			
-// for command 0x20, buffer adc's 1				
-	8'h20: ;// data_out <=
+// for command 0x20, read both buffer adc's 1				
+	8'h20:	data_out <= data_stream;
 	8'h22: ;// 
 endcase		
 		
@@ -208,6 +220,9 @@ assign o_relay2_3	=  relay_ch2[2];
 // ac / dc switch signal
 assign o_ac_dc_1		=  ac_dc_1;
 assign o_ac_dc_2		=  ac_dc_2;
+
+// data to mcu multiplexer
+assign data_stream		= (data_index[0] == 1'b0)? doA_1 : doB_1;
 
 // pll clock generator ------------------------------------------------
 wire				adc_MHz;    		// 200 MHz signal direct phase
@@ -257,7 +272,7 @@ assign o_offset_1	= pwm_offset_1;
 assign o_offset_2	= pwm_offset_2;
 
 // for 0x38, pwm timer for display brightness
-reg		[7:0]	pwm_dis; // 8 bits 256 countgets a 
+reg		[7:0]	pwm_dis; // 8 bits 256 count 
 reg				pwm_dis_out; // result
 // pwm timer for display brightness control
 always@(posedge pwm_kHz)
@@ -270,37 +285,126 @@ assign o_pwm_display = pwm_dis_out;
 //-----------------------------------------------------------------
 // acquisition stuff-----------------------------------------------
 // state register
-reg		[3:0]	state	= 1'h1;
-// state machine
-
+reg		[2:0]	state	= 3'h0;
+reg		[2:0]	state_next;
 
 // circular address counter, clock is internal when reading adc 
 // or external from mcu command
-wire				addr_clk_mcu;
-wire				addr_clk_adc;
-assign addr_clk_adc	= ( state == 0 )? addr_clk_mcu : adc_rate;
-wire				addr_en;
+wire				addr_clk;
+assign addr_clk	= ( state == 0 )? data_index[0] : adc_rate;
+//reg				addr_en;
 reg		[11:0]	addr;
 reg		[11:0]	match_addr;
 // circular address counter
-assign addr_en	= 1'b1;
-always@(posedge addr_clk_adc) if (addr_en) addr <= addr + 1;
-
+always@(posedge addr_clk)
+begin
+/*	if (addr_en)*/ addr <= addr + 1;
+end
 // control counter, half length
-wire				half_en;
-wire				half_reset;
+//reg				half_en;
+reg				half_reset;
+wire				is_half;
 reg		[10:0]	half;
-assign is_half = ( half == 0 )? 1'b1 : 1'b0;
+always@(posedge addr_clk)
+begin
+	if(half_reset) half <= 11'b0; //reset
+	else/* if (half_en)*/ half <= half + 1;
+end
+assign is_half = ( half == 11'b0 )? 1'b1 : 1'b0;
+
 // combinational logic for trigger match
+// this needs completion with trigger modes
 wire				match1A;
 wire				match1B;
+wire				match;
+assign match		= match1A; // | match1B;
 
-
-// compare channel 1, adc A, B
-wire		[7:0]	doA_1;
-wire		[7:0]	doB_1;
+// compare channel 1, adc A, B to find trigger point
 assign match1A	= ( doA_1 > trig_level )? 1'b1 : 1'b0;
 assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
+
+// state machine
+// state logic
+always@(state, reset, is_half, match)
+begin
+	case(state)
+	3'h0:	// during this state the mcu can read buffers	
+			// control counter reset to zero
+	begin	
+		if (reset == 1'b1) state_next = 3'h1; // start acquisition		
+	end	
+	3'h1:	// acquisition start, control counter reset cleare1Ad	
+			// ready flags cleared	
+	begin	
+		if (is_half == 1'b0) state_next = 3'h2; // control is counting	
+	end	
+	3'h2:	// waiting for first half buffer full	
+	begin	
+		if (is_half == 1'b1) state_next = 3'h3;	
+	end		
+	3'h3:	// waiting for trigger match, circular buffer continues filling	
+	begin	
+		if (match == 1'b1) state_next = 3'h4; // we have a match
+	end
+	3'h4:	// reset control counter after match	
+	begin	
+		state_next = 3'h5;
+	end		
+	3'h5:	// control counter reset	cleared
+	begin	
+		if (is_half == 1'b0) state_next = 3'h6; // control is counting	
+	end	
+	3'h6:	// waiting for second half buffer full	
+	begin
+		if (is_half == 1'b1) state_next = 3'h7;		
+	end
+	3'h7:	// setting the ready flags	
+				
+	begin
+		state_next = 3'h0;		
+	end
+	endcase		
+end
+// state output to registers
+always@(posedge adc_rate)
+begin
+	case(state)
+	3'h0:	
+	begin
+		half_reset <= 1'b1; // control counter reset to 0	
+	end
+	3'h1:
+	begin
+		half_reset <= 1'b0; // control counter starts
+//		half_en <= 1'b1; // control counter starts	
+//		addr_en <= 1'b1; // and the buffer address counter also		
+		ready <= 2'b00; // clear the ready and trigger match flags	
+	end
+	3'h4: // reset control counter after match	
+	begin	
+		half_reset <= 1'b1; // control counter reset to 0
+	end		
+	3'h5: // control counter starts
+	begin	
+		half_reset <= 1'b0; // control counter starts
+	end		
+	3'h7:	
+	begin
+//		half_en <= 1'b0; // half_counter stops	
+//		addr_en <= 1'b0; // and the buffer address counter also		
+		ready[0] <= 1'b1; // flag bit set to signal ready		
+		// set ready[1] flag to A or B match
+		ready[1]	<= (match1A == 1'b1)? 1'b0 : 1'b1;
+	end
+	endcase		
+end
+
+// state clock
+always@(posedge adc_MHz, negedge reset)
+begin
+	if(reset == 1'b0) state <= 3'h0;
+	else state <= state_next;
+end	
 
 
 // buffer channel 1, adc A 
@@ -323,9 +427,11 @@ assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
 
 // ----------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= adc_rate; // clock out
+assign o_adc_enc		= adc_rate; // clock out!ready
 // for debug, data index
-assign o_led_green 	= data_index[1] | data_index[0]; // debug led
-assign o_led_red   	= !match1A; // debug led
-
+//assign o_led_green 	= data_index[1] | data_index[0]; // debug led
+// for debug, state waiting for trigger
+assign o_led_red   	= (state == 3'h6)? 1'b0 : 1'b1; // debug led
+// for debug, ready flag
+assign o_led_green 	= !match;//half[10]; // debug led
 endmodule
