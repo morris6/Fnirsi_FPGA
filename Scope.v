@@ -17,6 +17,10 @@
 
 /*************************************************************
 This code is not (YET) taking care of crossing clock domains
+
+Sofar only buffers for channel 1
+Needs further logics for trigger conditions
+
 *************************************************************/
   
 // command and bidirectional data register.
@@ -288,6 +292,9 @@ assign o_pwm_display = pwm_dis_out;
 reg		[2:0]	state	= 3'h0;
 reg		[2:0]	state_next;
 
+// write enable for buffer memories
+reg				buf_wen;
+
 // circular address counter, clock is internal when reading adc 
 // or external from mcu command
 wire				addr_clk;
@@ -326,15 +333,14 @@ assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
 // state machine
 // state logic
 always@(state, reset, is_half, match)
-begin
-	case(state)
+case(state)
 	3'h0:	// during this state the mcu can read buffers	
 			// control counter reset to zero
 	begin	
 		if (reset == 1'b1) state_next = 3'h1; // start acquisition		
 	end	
-	3'h1:	// acquisition start, control counter reset cleare1Ad	
-			// ready flags cleared	
+	3'h1:	// acquisition start, control counter reset cleared	
+			// buffers write enabled, ready flags cleared	
 	begin	
 		if (is_half == 1'b0) state_next = 3'h2; // control is counting	
 	end	
@@ -359,23 +365,22 @@ begin
 		if (is_half == 1'b1) state_next = 3'h7;		
 	end
 	3'h7:	// setting the ready flags	
-				
+			// waiting for reset	
 	begin
-		state_next = 3'h0;		
+		if (reset == 1'b0) state_next = 3'h0;		
 	end
-	endcase		
-end
+endcase		
 // state output to registers
 always@(posedge adc_rate)
-begin
-	case(state)
+case(state)
 	3'h0:	
 	begin
 		half_reset <= 1'b1; // control counter reset to 0	
 	end
 	3'h1:
 	begin
-		half_reset <= 1'b0; // control counter starts
+		half_reset <= 1'b0; // control counter starts	
+		buf_wen <= 1'b1; // buffers are write enable
 //		half_en <= 1'b1; // control counter starts	
 //		addr_en <= 1'b1; // and the buffer address counter also		
 		ready <= 2'b00; // clear the ready and trigger match flags	
@@ -388,16 +393,16 @@ begin
 	begin	
 		half_reset <= 1'b0; // control counter starts
 	end		
-	3'h7:	
+	3'h7: // acquisition completed	
 	begin
 //		half_en <= 1'b0; // half_counter stops	
-//		addr_en <= 1'b0; // and the buffer address counter also		
+//		addr_en <= 1'b0; // and the buffer address counter also
+		buf_wen <= 1'b0; // disable further writing to buffers		
 		ready[0] <= 1'b1; // flag bit set to signal ready		
 		// set ready[1] flag to A or B match
 		ready[1]	<= (match1A == 1'b1)? 1'b0 : 1'b1;
 	end
-	endcase		
-end
+endcase		
 
 // state clock
 always@(posedge adc_MHz, negedge reset)
@@ -411,14 +416,14 @@ end
 	buffer adcA1_buffer(	.dia		(i_adc1A_d),
 						.addra	(addr),
 						.clka	(adc_rate_inv), // delay
-						.wea		(1'b1),
+						.wea		(buf_wen),
 						.doa		(doA_1)
 					);
 // buffer channel 1, adc B 
 	buffer adcB1_buffer(	.dia		(i_adc1B_d),
 						.addra	(addr),
 						.clka	(adc_rate_inv), // delay
-						.wea		(1'b1),
+						.wea		(buf_wen),
 						.doa		(doB_1)
 					);
 
@@ -431,7 +436,7 @@ assign o_adc_enc		= adc_rate; // clock out!ready
 // for debug, data index
 //assign o_led_green 	= data_index[1] | data_index[0]; // debug led
 // for debug, state waiting for trigger
-assign o_led_red   	= (state == 3'h6)? 1'b0 : 1'b1; // debug led
+assign o_led_red   	= (state == 3'h7)? 1'b0 : 1'b1; // debug led
 // for debug, ready flag
-assign o_led_green 	= !match;//half[10]; // debug led
+assign o_led_green 	= half[10]; // debug led
 endmodule
