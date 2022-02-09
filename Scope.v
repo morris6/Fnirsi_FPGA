@@ -316,10 +316,10 @@ assign is_half	= (&half); // 2048 11'h7FF
 wire				match1A;
 wire				match1B;
 wire				match;
-assign match		= match1A;// | match1B;
+assign match		= 1'b1;//match1A | match1B;
 
 // compare channel 1, adc A, B to find trigger point
-assign match1A	= ( 8'd127 > trig_level )? 1'b1 : 1'b0;
+assign match1A	= ( doA_1 > trig_level )? 1'b1 : 1'b0;
 assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
 
 // state machine
@@ -424,5 +424,5 @@ assign o_adc_enc		= is_half; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (ready == 2'b01)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (ready[0] == 1'b1)? 1'b0 : 1'b1; // debug led
 endmodule
