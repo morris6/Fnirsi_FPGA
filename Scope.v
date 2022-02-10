@@ -1,7 +1,7 @@
-/***********************************************************************
+/*****************************************************************************
 			Debugging version
 
-***********************************************************************/
+*****************************************************************************/
 // As far as wanted / needed replicating the FPGA in the scope.
 // We 're now at Scope12. Sofar:
 // command	0x01,  1, acquire - read buffer
@@ -19,13 +19,13 @@
 // 			0x37, 55, ac/dc control channel 2
 // command	0x38, 56, display backlight control
 
-/*************************************************************
+/*****************************************************************************
 This code is not (YET) taking care of crossing clock domains
 
 Sofar only buffers for channel 1
 Needs further logics for trigger conditions
 
-*************************************************************/
+*****************************************************************************/
   
 // command and bidirectional data register.
 // data index counter handling
@@ -80,13 +80,13 @@ module Scope(	input	wire			i_xtal,			// 50 MHz clock
 				output	wire			o_led_green,		// diagnostic leds
 				output	wire			o_led_red				
 );
-// --------------------------------------------------------------------
-// general command registers ------------------------------------------
+// ---------------------------------------------------------------------------
+// general command registers -------------------------------------------------
 reg		[7:0]	command;  		// stores the latest command
 reg		[7:0]	data_out; 		// stores data byte to be read by mcu
 // index counter for multiple data bytes storage
 reg 		[1:0]	data_index;
-// registers per command ----------------------------------------------
+// registers per command -----------------------------------------------------
 // command 0x01, 1 reset - go ?
 reg				acquire;			// 0- hold, 1- go
 // command 0x05, 5 ready flag
@@ -166,7 +166,7 @@ begin
 	else data_index <= data_index+1;	
 end	
 	
-// write by mcu to registers -------------------------------------------
+// write by mcu to registers -------------------------------------------------
 always@(posedge data_str)
 case(command)
 // for command 0x01, acquire - read buffers
@@ -222,7 +222,7 @@ assign o_relay2_3	=  relay_ch2[2];
 assign o_ac_dc_1		=  ac_dc_1;
 assign o_ac_dc_2		=  ac_dc_2;
 
-// pll clock generator -------------------------------------------------
+// pll clock generator -------------------------------------------------------
 wire				adc_MHz;    		// 200 MHz signal
 wire				pwm_kHz;			// 6400 kHz signal for pwm system
 // instantiate pll
@@ -281,9 +281,9 @@ begin
 end
 assign o_pwm_display = pwm_dis_out;
 
-/*----------------------------------------------------------------------
+/*----------------------------------------------------------------------------
 						now let's get some action
-// acquisition stuff--------------------------------------------------*/
+// acquisition stuff--------------------------------------------------------*/
 // state register
 reg		[2:0]	state	= 3'h0;
 reg		[2:0]	state_next;
@@ -324,7 +324,7 @@ assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
 
 // state machine
 // state logic
-always@(adc_rate, state, acquire, is_half, match)
+always@(adc_MHz, state, acquire, is_half, match)
 case(state)
 	3'h0:	// during this state the mcu can read buffers	
 	begin	
@@ -363,7 +363,7 @@ case(state)
 	end	
 endcase		
 // state output to registers
-always@(posedge adc_rate)
+always@(posedge adc_MHz)
 case(state)
 	3'h0:	
 	begin
@@ -393,7 +393,7 @@ case(state)
 endcase		
 
 // state clock
-always@(posedge adc_rate, negedge acquire)
+always@(posedge adc_MHz, negedge acquire)
 begin
 	if(acquire == 1'b0) state <= 3'h0;
 	else state <= state_next;
@@ -418,9 +418,9 @@ end
 
 
 
-// ----------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= is_half; // debug signal
+assign o_adc_enc		= (data_str == 1'b1)? 1'b1 : 1'b0; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
