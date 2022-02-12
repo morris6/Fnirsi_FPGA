@@ -22,7 +22,7 @@
 /*****************************************************************************
 This code is not (YET) taking care of crossing clock domains
 
-Sofar only buffers for channel 1
+Sofar only buffers for channel 1, channel 2 reads buffer address lowest bits
 Needs further logics for trigger conditions
 
 *****************************************************************************/
@@ -46,7 +46,7 @@ Needs further logics for trigger conditions
 
 // the adc's are pin selected to have A and B data aligned.
 // channel buffer is 2 x 8 bits wide, 4096 deep.
-// read back by mcu alternates between A and B 8 bits.
+// read back by mcu alternates between A and B 8 bits, 8192 bytes.
 //  
 // this is the top module, connecting to fpga pin connections.
 
@@ -65,7 +65,7 @@ module Scope(	input	wire			i_xtal,			// 50 MHz clock
 				output	wire			o_adc1_encB,
 				output	wire			o_adc2_encA,				
 				output	wire			o_adc2_encB,				
-				output	wire			o_offset_1,		// offset channnel 16
+				output	wire			o_offset_1,		// offset channnel 1
 				output	wire			o_relay1_1,		// relay channel 1
 				output	wire			o_relay1_2,				
 				output	wire			o_relay1_3,
@@ -138,6 +138,9 @@ wire		[23:0]	sample_rate;
 wire		[15:0]	offset_1;
 wire		[15:0]	offset_2;
 
+// declared here, sorry
+wire				trigger;
+
 // assign sample_rate[31:24]	= sample_rate_byte[0]; // not used
 assign	sample_rate[23:16]	= sample_rate_byte[1];
 assign	sample_rate[15:8]	= sample_rate_byte[2];
@@ -175,6 +178,8 @@ case(command)
 	8'h0D:	sample_rate_byte[data_index] <= io_mcu_d; // 13d
 // for command 0x0E, multi register read / write debug
 	8'h0E:	multi[data_index] <= io_mcu_d; // 14d	
+// for command 0x0F, trigger enable	
+	8'h0F:	trig_en <= io_mcu_d[0]; // 15d
 // for command 0x15, trigger channel	
 	8'h15:	trig_chan <= io_mcu_d[0]; // 21d
 // for command 0x16, trigger edge	
@@ -208,7 +213,7 @@ case(command)
 		end			
 // for command 0x20, read both buffer adc's 1				
 	8'h20:	data_out <= data_stream;
-	8'h22: ;// 
+	8'h22:	data_out <= 8'h7F; // give it something
 endcase		
 		
 // relay decoder
@@ -294,7 +299,7 @@ reg				buf_wen;
 // or external under mcu command
 wire				addr_clk;
 assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
-reg		[11:0]	addr; // 4096
+reg		[10:0]	addr; // 2048 //4096
 // circular address counter
 always@(posedge addr_clk)
 begin
@@ -303,28 +308,42 @@ end
 // control counter, half length
 reg				half_reset;
 wire				is_half;
-reg		[10:0]	half;
+reg		[9:0]	half;
 always@(posedge addr_clk)
 begin
 	if(half_reset) half <= 11'b0; // reset
 	else half <= half + 1;
 end
-assign is_half	= (&half); // 2048 11'h7FF
+assign is_half	= (&half); // 1024 // 2048 11'h7FF
 
 // combinational logic for trigger match, static compare for now!
 // this needs completion with trigger modes
-wire				match1A;
-wire				match1B;
-wire				match;
-assign match		= 1'b1;//match1A | match1B;
+wire				trigger1A;
+wire				trigger1B;
+reg				previous1A; // earlier compare with trig_level
+reg				previous1B;
+reg				present1A; // and now?
+reg				present1B;
 
 // compare channel 1, adc A, B to find trigger point
-assign match1A	= ( doA_1 > trig_level )? 1'b1 : 1'b0;
-assign match1B	= ( doB_1 > trig_level )? 1'b1 : 1'b0;
+always@(posedge adc_rate_inv) // reading present input to the adc's
+begin
+	present1A <= ( i_adc1A_d >= trig_level );
+	present1B <= ( i_adc1B_d >= trig_level );
+	previous1A <= present1A;
+	previous1B <= present1B;
+end	
 
+assign trigger1A = (!trig_en & !trig_chan & !trig_edge)?
+	previous1A & !present1A : 1'b0;
+assign trigger1B = (!trig_en & !trig_chan & !trig_edge)?
+	previous1B & !present1B : 1'b0;
+assign trigger = trigger1A | trigger1B;
+
+assign match		= 1'b1; // no triggering yet
 // state machine
 // state logic
-always@(adc_MHz, state, acquire, is_half, match)
+always@(adc_MHz, state, acquire, is_half, trigger)
 case(state)
 	3'h0:	// during this state the mcu can read buffers	
 	begin	
@@ -344,7 +363,7 @@ case(state)
 	3'h3:	// waiting for trigger match, circular buffer continues filling	
 			// reset control counter	
 	begin	
-		if (match == 1'b1) state_next = 3'h4; // we have a match	
+		if (trigger == 1'b1) state_next = 3'h4; // we have a match	
 		else state_next = 3'h3;
 	end
 	3'h4:	// control counter reset	cleared	
@@ -388,7 +407,7 @@ case(state)
 		buf_wen <= 1'b0; // disable further writing to buffers		
 		ready[0] <= 1'b1; // flag bit set to signal ready		
 		// set ready[1] flag to A or B match
-		ready[1]	<= (match1A == 1'b1)? 1'b0 : 1'b1; // !match1A
+		ready[1]	<= (trigger1A == 1'b1)? 1'b0 : 1'b1; // which one?
 	end
 endcase		
 
@@ -420,7 +439,7 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= (data_str == 1'b1)? 1'b1 : 1'b0; // debug signal
+assign o_adc_enc		= trigger; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
