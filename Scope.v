@@ -1,14 +1,20 @@
 /*****************************************************************************
-			Debugging version
-
+			Debug version Scope13.v
+			
+As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.					
 *****************************************************************************/
-// As far as wanted / needed replicating the FPGA in the scope.
-// We 're now at Scope12. Sofar:
-// command	0x01,  1, acquire - read buffer
-// command	0x05,  5, wait until ready, read by mcu
+// these functions are implemented sofar:
+// command	0x01,  1, reset acquisition system
+// command	0x05,  5, wait until reset ready, read by mcu
 // command 	0x06,  6, fpga ident 0x1432, 5470
+// command	0x0A, 10, wait until acquisition complete, read by mcu
 // command	0x0D, 13, sample rate, with interleaved A and B channel
 // command 	0x0E, 14, multiple byte debug
+// command	0x0F, 15, trigger enable
+// command	0x15, 21, trigger channel
+// command	0x16, 22, trigger edge
+// command	0x17, 23, trigger level
+// command	0x1A, 26, trigger mode
 // command	0x20, 32, mcu read buffer adc's channel 1
 // command	0x22, 34, mcu read buffer adc's channel 2
 // command	0x32, 50, offset channel 1
@@ -20,23 +26,25 @@
 // command	0x38, 56, display backlight control
 
 /*****************************************************************************
-This code is not (YET) taking care of crossing clock domains
+This code is not (YET) taking care of crossing clock domains, mcu <-> fpga.
 
-Sofar only buffers for channel 1, channel 2 reads buffer address lowest bits
-Needs further logics for trigger conditions
+Sofar only buffers for channel 1, channel 2 reads constant midway value.
+Needs completion of logics for trigger conditions.
 
 *****************************************************************************/
   
-// command and bidirectional data register.
+// command and bidirectional data register
 // data index counter handling
 // pll for adc clock signals 200MHz
+// block memory for adc's data buffer function
 // pwm timers for offset from xtal 50 MHz, runs at 24.4 kHz
 // pwm timer for backlight from 6400kHz, runs at 25 kHz
 
 // acquisition system after writing settings;
 // 1- mcu commands reset.
-// 2- mcu commands acquire.
-//		fpga clears ready flag.
+//		fpga clears acquisition flag and sets ready for new acquisition.
+// 2- mcu reads the ready flag and clears reset command.
+//		fpga starts aquisition.
 // 3- mcu polls ready flag, waiting for acquisition ready.
 //		fpga starts filling the circular buffer with adc's data.
 //		fpga looks for a trigger condition match after buffer is half filled.
@@ -44,9 +52,9 @@ Needs further logics for trigger conditions
 // 		fpga sets ready flag.
 // 4- mcu finds ready flag set and can start reading the buffers.
 
-// the adc's are pin selected to have A and B data aligned.
-// channel buffer is 2 x 8 bits wide, 4096 deep.
-// read back by mcu alternates between A and B 8 bits, 8192 bytes.
+// the adc's are hardware pin selected to have A and B data aligned.
+// channel buffer is 2 x 8 bits wide, 2048 deep.
+// read back by mcu alternates between A and B, total 4096 bytes.
 //  
 // this is the top module, connecting to fpga pin connections.
 
@@ -88,11 +96,11 @@ reg		[7:0]	data_out; 		// stores data byte to be read by mcu
 reg 		[1:0]	data_index;
 // registers per command -----------------------------------------------------
 // command 0x01, 1 reset - go ?
-reg				acquire;			// 0- hold, 1- go
+reg				reset;			// 0- hold, 1- go
 // command 0x05, 5 ready flag
-reg		[1:0]	ready;			// 00- busy, 01- ready(trigger in A), 11-ready(B)
+reg				ready;			// 0- busy, 1- ready
 // command 0x0A,10 sampling ready flag
-reg				sampling_done;	// ?
+reg		[2:0]	acq_done;		// [0] done, [1] trigger A, [2] trigger B
 // command 0x0D,13 sample rate value
 reg		[7:0]	sample_rate_byte[3:0];
 // command 0x0E,14 register array for debug
@@ -138,9 +146,6 @@ wire		[23:0]	sample_rate;
 wire		[15:0]	offset_1;
 wire		[15:0]	offset_2;
 
-// declared here, sorry
-wire				trigger;
-
 // assign sample_rate[31:24]	= sample_rate_byte[0]; // not used
 assign	sample_rate[23:16]	= sample_rate_byte[1];
 assign	sample_rate[15:8]	= sample_rate_byte[2];
@@ -172,8 +177,8 @@ end
 // write by mcu to registers -------------------------------------------------
 always@(posedge data_str)
 case(command)
-// for command 0x01, acquire - read buffers
-	8'h01:	acquire <= io_mcu_d[0]; // a 1 means go
+// for command 0x01, reset acuisition system
+	8'h01:	reset <= io_mcu_d[0]; // a 1 means reset
 // for command 0x0D, sample rate
 	8'h0D:	sample_rate_byte[data_index] <= io_mcu_d; // 13d
 // for command 0x0E, multi register read / write debug
@@ -217,12 +222,12 @@ case(command)
 endcase		
 		
 // relay decoder
-assign o_relay1_1	= !relay_ch1[0];
-assign o_relay1_2	=  relay_ch1[1];
-assign o_relay1_3	=  relay_ch1[2];
-assign o_relay2_1	= !relay_ch2[0];
-assign o_relay2_2	=  relay_ch2[1];
-assign o_relay2_3	=  relay_ch2[2];
+assign o_relay1_1	=  relay_ch1[0];
+assign o_relay1_2	= !relay_ch1[1];
+assign o_relay1_3	= !relay_ch1[2];
+assign o_relay2_1	=  relay_ch2[0];
+assign o_relay2_2	= !relay_ch2[1];
+assign o_relay2_3	= !relay_ch2[2];
 // ac / dc switch signal
 assign o_ac_dc_1		=  ac_dc_1;
 assign o_ac_dc_2		=  ac_dc_2;
@@ -318,6 +323,8 @@ assign is_half	= (&half); // 1024 // 2048 11'h7FF
 
 // combinational logic for trigger match, static compare for now!
 // this needs completion with trigger modes
+// declared here, sorry
+wire				trigger;
 wire				trigger1A;
 wire				trigger1B;
 reg				previous1A; // earlier compare with trig_level
@@ -332,28 +339,29 @@ begin
 	present1B <= ( i_adc1B_d >= trig_level );
 	previous1A <= present1A;
 	previous1B <= present1B;
-end	
+end		
 
-assign trigger1A = (!trig_en & !trig_chan & !trig_edge)?
+assign trigger1A = (/*!trig_en & !trig_chan &*/ !trig_edge)?
 	previous1A & !present1A : 1'b0;
-assign trigger1B = (!trig_en & !trig_chan & !trig_edge)?
+assign trigger1B = (/*!trig_en & !trig_chan &*/ !trig_edge)?
 	previous1B & !present1B : 1'b0;
+	
 assign trigger = trigger1A | trigger1B;
 
-assign match		= 1'b1; // no triggering yet
 // state machine
 // state logic
-always@(adc_MHz, state, acquire, is_half, trigger)
+always@(adc_MHz, state, reset, is_half, trigger)
 case(state)
 	3'h0:	// during this state the mcu can read buffers	
 	begin	
-		if (acquire == 1'b1) state_next = 3'h1; // start acquisition	
+		if (reset == 1'b1) state_next = 3'h1; // prepare
 		else state_next = 3'h0;		
 	end	
 	3'h1:	// buffers write enabled, ready flags cleared	
 			// acquisition start, control counter reset cleared	
 	begin	
-		state_next = 3'h2;	
+		if (reset == 1'b0) state_next = 3'h2; // start acquisition		
+		else state_next = 3'h1;
 	end	
 	3'h2:	// waiting for first half buffer full	
 	begin	
@@ -377,8 +385,7 @@ case(state)
 	end	
 	3'h6:	//
 	begin	
-		if (acquire == 1'b0) state_next = 3'h0;	
-		else state_next = 3'h6;	
+		state_next = 3'h0; // end of acquisition
 	end	
 endcase		
 // state output to registers
@@ -391,8 +398,9 @@ case(state)
 	3'h1:
 	begin
 		half_reset <= 1'b0; // control counter starts	
-		buf_wen <= 1'b1; // buffers are write enable
-		ready <= 2'b00; // clear the ready and trigger match flags	
+		buf_wen <= 1'b1;    // buffers are write enable
+		acq_done <= 3'b000; // clear the ready and trigger match flags	
+		ready <= 1'b1;		
 	end
 	3'h4: // reset control counter	
 	begin	
@@ -404,17 +412,18 @@ case(state)
 	end		
 	3'h6: // acquisition completed	
 	begin
-		buf_wen <= 1'b0; // disable further writing to buffers		
-		ready[0] <= 1'b1; // flag bit set to signal ready		
-		// set ready[1] flag to A or B match
-		ready[1]	<= (trigger1A == 1'b1)? 1'b0 : 1'b1; // which one?
+		buf_wen <= 1'b0;    	// disable further writing to buffers		
+		ready <= 1'b0;      	// flag reset		
+		acq_done[0] <= 1'b1;	// acquisition done		
+		acq_done[1] <= (trigger1A == 1'b1)? 1'b0 : 1'b1; // which one?
+		acq_done[2] <= (trigger1B == 1'b1)? 1'b0 : 1'b1; // which one?
 	end
 endcase		
 
 // state clock
-always@(posedge adc_MHz, negedge acquire)
+always@(posedge adc_MHz, negedge reset)
 begin
-	if(acquire == 1'b0) state <= 3'h0;
+	if(reset == 1'b0) state <= 3'h0;
 	else state <= state_next;
 end	
 
@@ -443,5 +452,5 @@ assign o_adc_enc		= trigger; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (ready[0] == 1'b1)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (acq_done[0] == 1'b1)? 1'b0 : 1'b1; // debug led
 endmodule
