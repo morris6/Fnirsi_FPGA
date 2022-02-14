@@ -395,12 +395,15 @@ case(state)
 	begin
 		half_reset <= 1'b1; // control counter reset to 0	
 	end
-	3'h1:
+	3'h1:	
 	begin
-		half_reset <= 1'b0; // control counter starts	
 		buf_wen <= 1'b1;    // buffers are write enable
 		acq_done <= 3'b000; // clear the ready and trigger match flags	
-		ready <= 1'b1;		
+		ready <= 1'b1; // reset ready
+	end
+	3'h2:
+	begin
+		half_reset <= 1'b0; // control counter starts	
 	end
 	3'h4: // reset control counter	
 	begin	
@@ -415,16 +418,15 @@ case(state)
 		buf_wen <= 1'b0;    	// disable further writing to buffers		
 		ready <= 1'b0;      	// flag reset		
 		acq_done[0] <= 1'b1;	// acquisition done		
-		acq_done[1] <= (trigger1A == 1'b1)? 1'b0 : 1'b1; // which one?
-		acq_done[2] <= (trigger1B == 1'b1)? 1'b0 : 1'b1; // which one?
+		acq_done[1] <= (trigger1A); // which one?
+		acq_done[2] <= (trigger1B); // which one?
 	end
 endcase		
 
 // state clock
-always@(posedge adc_MHz, negedge reset)
+always@(posedge adc_MHz)
 begin
-	if(reset == 1'b0) state <= 3'h0;
-	else state <= state_next;
+	state <= state_next;
 end	
 
 
@@ -452,5 +454,5 @@ assign o_adc_enc		= trigger; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (acq_done[0] == 1'b1)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (state == 3'h3)? 1'b0 : 1'b1; // debug led
 endmodule
