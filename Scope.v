@@ -10,7 +10,7 @@ As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.
 // command	0x0A, 10, wait until acquisition complete, read by mcu
 // command	0x0D, 13, sample rate, with interleaved A and B channel
 // command 	0x0E, 14, multiple byte debug
-// command	0x0F, 15, trigger enable
+// command	0x0F, 15, trigger auto pulse
 // command	0x15, 21, trigger channel
 // command	0x16, 22, trigger edge
 // command	0x17, 23, trigger level
@@ -105,7 +105,7 @@ reg		[2:0]	acq_done;		// [0] done, [1] trigger A, [2] trigger B
 reg		[7:0]	sample_rate_byte[3:0];
 // command 0x0E,14 register array for debug
 reg		[7:0]	multi[3:0];		// debug write and readback
-// command 0x0F,15 trigger enable
+// command 0x0F,15 trigger auto pulse
 reg				trig_en;			// 0- enabled, 1- disabled
 // command 0x15,21 trigger channel
 reg				trig_chan;		// 0- channel 1, 1- channel 2
@@ -184,7 +184,7 @@ case(command)
 // for command 0x0E, multi register read / write debug
 	8'h0E:	multi[data_index] <= io_mcu_d; // 14d	
 // for command 0x0F, trigger enable	
-	8'h0F:	trig_en <= io_mcu_d[0]; // 15d
+	8'h0F:	trig_en <= io_mcu_d[0]; // 15d auto pulse
 // for command 0x15, trigger channel	
 	8'h15:	trig_chan <= io_mcu_d[0]; // 21d
 // for command 0x16, trigger edge	
@@ -321,32 +321,31 @@ begin
 end
 assign is_half	= (&half); // 1024 // 2048 11'h7FF
 
-// combinational logic for trigger match, static compare for now!
-// this needs completion with trigger modes
-// declared here, sorry
+// combinational logic for trigger match.
+// this needs completion with channel 2
 wire				trigger;
-wire				trigger1A;
-wire				trigger1B;
-reg				previous1A; // earlier compare with trig_level
-reg				previous1B;
-reg				present1A; // and now?
-reg				present1B;
+wire				triggerA;
+wire				triggerB;
+reg				previousA; // earlier compare with trig_level
+reg				previousB;
+reg				presentA; // and now?
+reg				presentB;
 
 // compare channel 1, adc A, B to find trigger point
 always@(posedge adc_rate_inv) // reading present input to the adc's
 begin
-	present1A <= ( i_adc1A_d >= trig_level );
-	present1B <= ( i_adc1B_d >= trig_level );
-	previous1A <= present1A;
-	previous1B <= present1B;
+	presentA <= ( i_adc1A_d >= trig_level );
+	presentB <= ( i_adc1B_d >= trig_level );
+	previousA <= presentA;
+	previousB <= presentB;
 end		
 
-assign trigger1A = (/*!trig_en & !trig_chan &*/ !trig_edge)?
-	previous1A & !present1A : 1'b0;
-assign trigger1B = (/*!trig_en & !trig_chan &*/ !trig_edge)?
-	previous1B & !present1B : 1'b0;
+assign triggerA = (trig_edge)? // rising - falling ?
+	!previousA & presentA : previousA & !presentA;
+assign triggerB = (trig_edge)? // rising - falling ?
+	!previousB & presentB : previousB & !presentB;
 	
-assign trigger = trigger1A | trigger1B;
+assign trigger = (trig_en)? (triggerA | triggerB) : 1'b1; // auto pulse
 
 // state machine
 // state logic
@@ -418,8 +417,8 @@ case(state)
 		buf_wen <= 1'b0;    	// disable further writing to buffers		
 		ready <= 1'b0;      	// flag reset		
 		acq_done[0] <= 1'b1;	// acquisition done		
-		acq_done[1] <= (trigger1A); // which one?
-		acq_done[2] <= (trigger1B); // which one?
+		acq_done[1] <= (triggerA); // which one?
+		acq_done[2] <= (triggerB); // which one?
 	end
 endcase		
 
@@ -454,5 +453,5 @@ assign o_adc_enc		= trigger; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (state == 3'h3)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (state == 3'h5)? 1'b0 : 1'b1; // debug led
 endmodule
