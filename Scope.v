@@ -105,7 +105,7 @@ reg		[2:0]	acq_done;		// [0] done, [1] trigger A, [2] trigger B
 reg		[7:0]	sample_rate_byte[3:0];
 // command 0x0E,14 register array for debug
 reg		[7:0]	multi[3:0];		// debug write and readback
-// command 0x0F,15 trigger auto pulse
+// command 0x0F,15 trigger enable
 reg				trig_en;			// 0- enabled, 1- disabled
 // command 0x15,21 trigger channel
 reg				trig_chan;		// 0- channel 1, 1- channel 2
@@ -184,7 +184,7 @@ case(command)
 // for command 0x0E, multi register read / write debug
 	8'h0E:	multi[data_index] <= io_mcu_d; // 14d	
 // for command 0x0F, trigger enable	
-	8'h0F:	trig_en <= io_mcu_d[0]; // 15d auto pulse
+	8'h0F:	trig_en <= io_mcu_d[0]; // 15d
 // for command 0x15, trigger channel	
 	8'h15:	trig_chan <= io_mcu_d[0]; // 21d
 // for command 0x16, trigger edge	
@@ -340,12 +340,12 @@ begin
 	previousB <= presentB;
 end		
 
-assign triggerA = (trig_edge)? // rising - falling ?
-	!previousA & presentA : previousA & !presentA;
+assign triggerA = (trig_edge)? // rising(0) - falling(1) ?
+	!previousA & presentA : previousA & !presentA; // 1 : 0 !
 assign triggerB = (trig_edge)? // rising - falling ?
 	!previousB & presentB : previousB & !presentB;
 	
-assign trigger = (trig_en)? (triggerA | triggerB) : 1'b1; // auto pulse
+assign trigger = /*trig_en |*/ triggerA | triggerB; // ?? trig_en ??
 
 // state machine
 // state logic
@@ -449,7 +449,7 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= trigger; // debug signal
+assign o_adc_enc		= trig_en; // debug signal
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
