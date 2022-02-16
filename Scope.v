@@ -10,7 +10,7 @@ As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.
 // command	0x0A, 10, wait until acquisition complete, read by mcu
 // command	0x0D, 13, sample rate, with interleaved A and B channel
 // command 	0x0E, 14, multiple byte debug
-// command	0x0F, 15, trigger auto pulse
+// command	0x0F, 15, trigger enable
 // command	0x15, 21, trigger channel
 // command	0x16, 22, trigger edge
 // command	0x17, 23, trigger level
@@ -53,8 +53,8 @@ Needs completion of logics for trigger conditions.
 // 4- mcu finds ready flag set and can start reading the buffers.
 
 // the adc's are hardware pin selected to have A and B data aligned.
-// channel buffer is 2 x 8 bits wide, 2048 deep.
-// read back by mcu alternates between A and B, total 4096 bytes.
+// channel buffer is 2 x 8 bits wide, 4096 deep.
+// read back by mcu alternates between A and B, total 8192 bytes.
 //  
 // this is the top module, connecting to fpga pin connections.
 
@@ -209,7 +209,8 @@ endcase
 // read registers by mcu
 always@(posedge data_read_str)
 case(command)
-	8'h05:	data_out <= ready; // acquisition ready
+	8'h05:	data_out <= ready; // reset ready
+	8'h0A:	data_out <= acq_done; // acquisition ready
 	8'h0E:	data_out <= multi[data_index]; // 14d read debug
 	8'h06: // for command 0x06, fpga ident..?			
 		begin
@@ -279,7 +280,7 @@ end
 assign o_offset_1	= pwm_offset_1;
 assign o_offset_2	= pwm_offset_2;
 
-// for 0x38, pwm timer for display brightness
+// for 0x38, pwm timer for display brightnessacq_done
 reg		[7:0]	pwm_dis; // 8 bits 256 count 
 reg				pwm_dis_out; // result
 // pwm timer for display brightness control
@@ -304,34 +305,34 @@ reg				buf_wen;
 // or external under mcu command
 wire				addr_clk;
 assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
-reg		[10:0]	addr; // 2048 //4096
+reg		[11:0]	addr; //4096 x 2 = 8192 bytes / channel
 // circular address counter
 always@(posedge addr_clk)
 begin
 	addr <= addr + 1;
 end
-// control counter, half length
+// control counter, half length of address counter
 reg				half_reset;
 wire				is_half;
-reg		[9:0]	half;
+reg		[10:0]	half;
 always@(posedge addr_clk)
 begin
 	if(half_reset) half <= 11'b0; // reset
 	else half <= half + 1;
 end
-assign is_half	= (&half); // 1024 // 2048 11'h7FF
+assign is_half	= (&half); // 2048 11'h7FF
 
 // combinational logic for trigger match.
 // this needs completion with channel 2
 wire				trigger;
-wire				triggerA;
-wire				triggerB;
+reg				triggerA;
+reg				triggerB;
 reg				previousA; // earlier compare with trig_level
 reg				previousB;
-reg				presentA; // and now?
+reg				presentA;  // and now?
 reg				presentB;
 
-// compare channel 1, adc A, B to find trigger point
+ // compare channel 1, adc A, B to find trigger point
 always@(posedge adc_rate_inv) // reading present input to the adc's
 begin
 	presentA <= ( i_adc1A_d >= trig_level );
@@ -339,13 +340,37 @@ begin
 	previousA <= presentA;
 	previousB <= presentB;
 end		
-
+// rising or falling? remember until end of acquisition
+// for this triggerA and triggerB must be changed to reg, not wire
+always@(posedge adc_rate_inv, posedge trig_en)
+begin
+	if(trig_en)
+		begin
+			triggerA <= 1'b0; // clear trigger
+			triggerB <= 1'b0;			
+		end
+	else		
+		begin
+			if(trig_edge)	// falling edge		
+				begin			
+					if(!previousA & presentA) triggerA <= 1'b1;		
+					if(!previousB & presentB) triggerB <= 1'b1;					
+				end
+			else				
+				begin		// rising edge		
+					if(previousA & !presentA) triggerA <= 1'b1;		
+					if(previousB & !presentB) triggerB <= 1'b1;					
+				end					
+		end
+end
+/*
 assign triggerA = (trig_edge)? // rising(0) - falling(1) ?
 	!previousA & presentA : previousA & !presentA; // 1 : 0 !
 assign triggerB = (trig_edge)? // rising - falling ?
 	!previousB & presentB : previousB & !presentB;
-	
-assign trigger = /*trig_en |*/ triggerA | triggerB; // ?? trig_en ??
+*/	
+// trigger signal is used in state machine	
+assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
 
 // state machine
 // state logic
@@ -398,7 +423,7 @@ case(state)
 	begin
 		buf_wen <= 1'b1;    // buffers are write enable
 		acq_done <= 3'b000; // clear the ready and trigger match flags	
-		ready <= 1'b1; // reset ready
+		ready <= 1'b1; // set ready flag
 	end
 	3'h2:
 	begin
@@ -449,7 +474,7 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= trig_en; // debug signal
+assign o_adc_enc		= triggerA; // debug signal,
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger

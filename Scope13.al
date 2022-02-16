@@ -2,7 +2,7 @@
 <Project Version="1" Path="/home/mauk/Fnirsi-1013D/Tang/Scope13">
     <Project_Created_Time>2022-01-16 13:50:57</Project_Created_Time>
     <TD_Version>5.0.28716</TD_Version>
-    <UCode>10001110</UCode>
+    <UCode>01111100</UCode>
     <Name>Scope13</Name>
     <HardWare>
         <Family>AL3</Family>
@@ -64,7 +64,7 @@
     <Configurations>
     </Configurations>
     <Project_Settings>
-        <Step_Last_Change>2022-02-15 22:19:22.650</Step_Last_Change>
+        <Step_Last_Change>2022-02-16 22:23:55.957</Step_Last_Change>
         <Current_Step>60</Current_Step>
         <Step_Status>true</Step_Status>
     </Project_Settings>
