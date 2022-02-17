@@ -137,9 +137,13 @@ reg		[7:0]	display;			// 0- off, 1-255- brightness
 // data out from buffers
 wire		[7:0]	doA_1;
 wire		[7:0]	doB_1;
+wire		[7:0]	doA_2;
+wire		[7:0]	doB_2;
 // prepare data stream for reading by mcu 
-wire		[7:0]	data_stream;
-assign	data_stream			= (!data_index[0])? doA_1 : doB_1;
+wire		[7:0]	data_stream1;
+assign	data_stream1			= (!data_index[0])? doA_1 : doB_1;
+wire		[7:0]	data_stream2;
+assign	data_stream2			= (!data_index[0])? doA_2 : doB_2;
 
 // nets for combining data bytes to multi byte registers
 wire		[23:0]	sample_rate;
@@ -217,9 +221,9 @@ case(command)
 			if(data_index == 0) data_out <= 8'h14; // 5170 decimal		
 			else if 	(data_index == 1) data_out <= 8'h32;
 		end			
-// for command 0x20, read both buffer adc's 1				
-	8'h20:	data_out <= data_stream;
-	8'h22:	data_out <= 8'h7F; // give it something
+// for command 0x20, 22			
+	8'h20:	data_out <= data_stream1; // interleaved A and B data
+	8'h22:	data_out <= 8'h7F;// data_stream2; 
 endcase		
 		
 // relay decoder
@@ -322,8 +326,9 @@ begin
 end
 assign is_half	= (&half); // 2048 11'h7FF
 
-// combinational logic for trigger match.
-// this needs completion with channel 2
+// -------------------------trigger------------------------------------------
+wire				adcA;	   // channel multiplexed
+wire				adcB;
 wire				trigger;
 reg				triggerA;
 reg				triggerB;
@@ -332,10 +337,14 @@ reg				previousB;
 reg				presentA;  // and now?
 reg				presentB;
 
- // compare channel 1, adc A, B to find trigger point
+// look at channel 1 or 2 as commanded by trig_chan
+assign adcA		= (trig_chan)? i_adc2A_d : i_adc1A_d;
+assign adcB		= (trig_chan)? i_adc2B_d : i_adc1B_d;
+
+// compare channel 1, adc A, B to find trigger point
 always@(posedge adc_rate_inv) // reading present input to the adc's
 begin
-	presentA <= ( i_adc1A_d >= trig_level );
+	presentA <= ( i_adc1A_d >= trig_level ); // debug
 	presentB <= ( i_adc1B_d >= trig_level );
 	previousA <= presentA;
 	previousB <= presentB;
@@ -363,14 +372,10 @@ begin
 				end					
 		end
 end
-/*
-assign triggerA = (trig_edge)? // rising(0) - falling(1) ?
-	!previousA & presentA : previousA & !presentA; // 1 : 0 !
-assign triggerB = (trig_edge)? // rising - falling ?
-	!previousB & presentB : previousB & !presentB;
-*/	
+
 // trigger signal is used in state machine	
 assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
+//----------------------------------------------------------------------------
 
 // state machine
 // state logic
@@ -453,7 +458,7 @@ begin
 	state <= state_next;
 end	
 
-
+//-----------------------------------buffers------------------------------
 // buffer channel 1, adc A 
 	buffer adcA1_buffer(	.dia		(i_adc1A_d),
 						.addra	(addr),
@@ -467,6 +472,20 @@ end
 						.clka	(adc_rate_inv), // delay
 						.wea		(buf_wen),
 						.doa		(doB_1)
+					);
+// buffer channel 2, adc A 
+	buffer adcA2_buffer(	.dia		(i_adc2A_d),
+						.addra	(addr),
+						.clka	(adc_rate_inv), // delay
+						.wea		(buf_wen),
+						.doa		(doA_2)
+					);
+// buffer channel 1, adc B 
+	buffer adcB2_buffer(	.dia		(i_adc2B_d),
+						.addra	(addr),
+						.clka	(adc_rate_inv), // delay
+						.wea		(buf_wen),
+						.doa		(doB_2)
 					);
 
 
