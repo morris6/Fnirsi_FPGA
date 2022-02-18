@@ -319,12 +319,12 @@ end
 reg				half_reset;
 wire				is_half;
 reg		[10:0]	half;
-always@(posedge addr_clk)
+always@(posedge addr_clk, posedge half_reset)
 begin
 	if(half_reset) half <= 11'b0; // reset
 	else half <= half + 1;
 end
-assign is_half	= (&half); // 2048 11'h7FF
+assign is_half	= (&half); // 2047 11'h7FF
 
 // -------------------------trigger------------------------------------------
 wire				adcA;	   // channel multiplexed
@@ -400,19 +400,19 @@ case(state)
 	3'h3:	// waiting for trigger match, circular buffer continues filling	
 			// reset control counter	
 	begin	
-		if (trigger == 1'b1) state_next = 3'h4; // we have a match	
+		if (trigger == 1'b1) state_next = 3'h4; // we reached trigger point
 		else state_next = 3'h3;
 	end
-	3'h4:	// control counter reset	cleared	
+	3'h4:	// control counter reset cleared
 	begin	
-		state_next = 3'h5;
-	end		
+		state_next = 3'h5;	
+	end	
 	3'h5:	// waiting for second half buffer full 
 	begin	
 		if (is_half == 1'b1) state_next = 3'h6; // control is counting	
 		else state_next = 3'h5;	
 	end	
-	3'h6:	//
+	3'h6:	// set acq_done registers, reset flag, stop writing buffer
 	begin	
 		state_next = 3'h0; // end of acquisition
 	end	
@@ -434,11 +434,11 @@ case(state)
 	begin
 		half_reset <= 1'b0; // control counter starts	
 	end
-	3'h4: // reset control counter	
+	3'h3: // reset control counter	
 	begin	
 		half_reset <= 1'b1; // control counter reset to 0
 	end		
-	3'h5: // control counter starts
+	3'h4: // control counter starts
 	begin	
 		half_reset <= 1'b0; // control counter starts
 	end		
@@ -493,9 +493,9 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= triggerA; // debug signal,
+assign o_adc_enc		= (state != 3'h0); // debug signal,
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (state == 3'h5)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= 1'b1;//(acq_done[0])? 1'b0 : 1'b1; // debug led
 endmodule
