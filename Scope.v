@@ -1,5 +1,5 @@
 /*****************************************************************************
-			Debug version Scope13.v
+			Debug version Scope15.v
 			
 As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.					
 *****************************************************************************/
@@ -162,11 +162,17 @@ assign	offset_2[7:0]		= offset_2_byte[1];
 // data_out is high Z during i_mcu_rws, during write
 assign 	io_mcu_d = i_mcu_rws? 8'bZ : data_out;
 
+// synchronize to fpga clock system
+reg		mcu_clk1;
+reg		mcu_clk2;
+always@(posedge adc_MHz) mcu_clk1 <= i_mcu_clk;
+always@(posedge adc_MHz) mcu_clk2 <= mcu_clk1;
+
 // create strobe signals
-wire comm_str = (!i_mcu_clk & i_mcu_rws & i_mcu_dcs);
-wire data_str = (!i_mcu_clk & i_mcu_rws & !i_mcu_dcs);
-wire data_read_str = (!i_mcu_clk & !i_mcu_rws & !i_mcu_dcs);
-wire data_index_str = (!i_mcu_clk & !i_mcu_dcs);
+wire comm_str = (!mcu_clk2 & i_mcu_rws & i_mcu_dcs);
+wire data_str = (!mcu_clk2 & i_mcu_rws & !i_mcu_dcs);
+wire data_read_str = (!mcu_clk2 & !i_mcu_rws & !i_mcu_dcs);
+wire data_index_str = (!mcu_clk2 & !i_mcu_dcs);
 
 // read command from mcu
 always@(posedge comm_str) command <= io_mcu_d; // store command
