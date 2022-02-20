@@ -26,7 +26,8 @@ As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.
 // command	0x38, 56, display backlight control
 
 /*****************************************************************************
-This code is not (YET) taking care of crossing clock domains, mcu <-> fpga.
+This code is taking care of crossing clock domains, mcu <-> fpga, by
+double buffering i_mcu_clk signal.
 
 Sofar only buffers for channel 1, channel 2 reads constant midway value.
 Needs completion of logics for trigger conditions.
@@ -89,6 +90,16 @@ module Scope(	input	wire			i_xtal,			// 50 MHz clock
 				output	wire			o_led_red				
 );
 // ---------------------------------------------------------------------------
+// pll clock generator -------------------------------------------------------
+wire				adc_MHz;    		// 200 MHz signal
+wire				pwm_kHz;			// 6400 kHz signal for pwm system
+// instantiate pll
+	pll scope_pll(	.refclk		(i_xtal),
+					.reset		(1'b0),
+					.clk0_out	(adc_MHz),	
+					.clk1_out	(pwm_kHz)
+				);
+				
 // general command registers -------------------------------------------------
 reg		[7:0]	command;  		// stores the latest command
 reg		[7:0]	data_out; 		// stores data byte to be read by mcu
@@ -243,16 +254,6 @@ assign o_relay2_3	= !relay_ch2[2];
 assign o_ac_dc_1		=  ac_dc_1;
 assign o_ac_dc_2		=  ac_dc_2;
 
-// pll clock generator -------------------------------------------------------
-wire				adc_MHz;    		// 200 MHz signal
-wire				pwm_kHz;			// 6400 kHz signal for pwm system
-// instantiate pll
-	pll scope_pll(	.refclk		(i_xtal),
-					.reset		(1'b0),
-					.clk0_out	(adc_MHz),	
-					.clk1_out	(pwm_kHz)
-				);
-				
 // for 0x13 mod counter for adc clocks
 reg		[23:0]	rate_count;
 reg				adc_rate		= 0;	// flip flop divide by 2
@@ -312,7 +313,7 @@ reg		[2:0]	state_next;
 reg				buf_wen;
 
 // circular address counter, clock is internal when reading adc 
-// or external under mcu command
+// or external when under mcu command
 wire				addr_clk;
 assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
 reg		[11:0]	addr; //4096 x 2 = 8192 bytes / channel
@@ -333,33 +334,40 @@ end
 assign is_half	= (&half); // 2047 11'h7FF
 
 // -------------------------trigger------------------------------------------
-wire				adcA;	   // channel multiplexed
-wire				adcB;
+wire		[7:0]	adcA;	   // channel multiplexed
+wire		[7:0]	adcB;
 wire				trigger;
-reg				triggerA;
-reg				triggerB;
+wire				triggerA;
+wire				triggerB;
 reg				previousA; // earlier compare with trig_level
 reg				previousB;
 reg				presentA;  // and now?
 reg				presentB;
 
 // look at channel 1 or 2 as commanded by trig_chan
-assign adcA		= (trig_chan)? i_adc2A_d : i_adc1A_d;
-assign adcB		= (trig_chan)? i_adc2B_d : i_adc1B_d;
+assign adcA = /*(trig_chan)? i_adc2A_d :*/ i_adc1A_d;
+assign adcB = /*(trig_chan)? i_adc2B_d :*/ i_adc1B_d;
 
-// compare channel 1, adc A, B to find trigger point
-always@(posedge adc_rate_inv) // reading present input to the adc's
+// compare adc A, B to find trigger point
+always@(posedge adc_rate) // reading present input to the adc's
 begin
-	presentA <= ( i_adc1A_d >= trig_level ); // debug
-	presentB <= ( i_adc1B_d >= trig_level );
+	presentA <= (adcA >= trig_level); // debug
+	presentB <= (adcB >= trig_level);
 	previousA <= presentA;
 	previousB <= presentB;
-end		
-// rising or falling? remember until end of acquisition
+end	
+
+assign triggerA = (trig_edge)?
+	previousA & !presentA : !previousA & presentA;
+assign triggerB = (trig_edge)?
+	previousB & !presentB : !previousB & presentB;
+		
+// rising or falling? remember A or B until end of acquisition
 // for this triggerA and triggerB must be changed to reg, not wire
-always@(posedge adc_rate_inv, posedge trig_en)
+// trigger must be tested while in state3, not earlier
+/*always@(posedge adc_rate, negedge trig_en)
 begin
-	if(trig_en)
+	if(!trig_en)
 		begin
 			triggerA <= 1'b0; // clear trigger
 			triggerB <= 1'b0;			
@@ -377,7 +385,7 @@ begin
 					if(previousB & !presentB) triggerB <= 1'b1;					
 				end					
 		end
-end
+end*/
 
 // trigger signal is used in state machine	
 assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
@@ -403,7 +411,7 @@ case(state)
 		if (is_half == 1'b1) state_next = 3'h3;	 //	is_half
 		else state_next = 3'h2;	
 	end		
-	3'h3:	// waiting for trigger match, circular buffer continues filling	
+	3'h3:	// waiting for trigger, circular buffer continues filling	
 			// reset control counter	
 	begin	
 		if (trigger == 1'b1) state_next = 3'h4; // we reached trigger point
@@ -499,9 +507,9 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= (state != 3'h0); // debug signal,
+assign o_adc_enc		= (triggerA); // debug signal,
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= 1'b1;//(acq_done[0])? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (trig_chan)? 1'b0 : 1'b1; // debug led
 endmodule
