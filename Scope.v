@@ -212,7 +212,7 @@ case(command)
 	8'h16:	trig_edge <= io_mcu_d[0]; // 22d
 // for command 0x17, trigger level	
 	8'h17:	trig_level <= io_mcu_d; // 23d
-// for command 0x16, trigger mode
+// for command 0x1A, trigger mode
 	8'h1A:	trig_mode <= io_mcu_d[0]; // 26d
 // for command 0x32 or 0x35, offset
 	8'h32:  offset_1_byte[data_index] <= io_mcu_d; // 50d		
@@ -240,7 +240,7 @@ case(command)
 		end			
 // for command 0x20, 22			
 	8'h20:	data_out <= data_stream1; // interleaved A and B data
-	8'h22:	data_out <= 8'h7F;// data_stream2; 
+	8'h22:	data_out <= data_stream2; 
 endcase		
 		
 // relay decoder
@@ -291,7 +291,7 @@ end
 assign o_offset_1	= pwm_offset_1;
 assign o_offset_2	= pwm_offset_2;
 
-// for 0x38, pwm timer for display brightnessacq_done
+// for 0x38, pwm timer for display brightness
 reg		[7:0]	pwm_dis; // 8 bits 256 count 
 reg				pwm_dis_out; // result
 // pwm timer for display brightness control
@@ -306,16 +306,10 @@ assign o_pwm_display = pwm_dis_out;
 /*----------------------------------------------------------------------------
 						now let's get some action
 // acquisition stuff--------------------------------------------------------*/
-// state register
-reg		[2:0]	state	= 3'h0;
-reg		[2:0]	state_next;
-// write enable for buffer memories
-reg				buf_wen;
 
 // circular address counter, clock is internal when reading adc 
 // or external when under mcu command
 wire				addr_clk;
-assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
 reg		[11:0]	addr; //4096 x 2 = 8192 bytes / channel
 // circular address counter
 always@(posedge addr_clk)
@@ -345,8 +339,8 @@ reg				presentA;  // and now?
 reg				presentB;
 
 // look at channel 1 or 2 as commanded by trig_chan
-assign adcA = /*(trig_chan)? i_adc2A_d :*/ i_adc1A_d;
-assign adcB = /*(trig_chan)? i_adc2B_d :*/ i_adc1B_d;
+assign adcA = (trig_chan)? i_adc2A_d : i_adc1A_d;
+assign adcB = (trig_chan)? i_adc2B_d : i_adc1B_d;
 
 // compare adc A, B to find trigger point
 always@(posedge adc_rate) // reading present input to the adc's
@@ -389,9 +383,18 @@ end*/
 
 // trigger signal is used in state machine	
 assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
-//----------------------------------------------------------------------------
 
-// state machine
+//----------------------------------------------------------------------------
+// state machine--------------------------------------------------------------
+
+// state register
+reg		[2:0]	state	= 3'h0;
+reg		[2:0]	state_next;
+// write enable for buffer memories
+reg				buf_wen;
+// addr_clk controlled by state0
+assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
+
 // state logic
 always@(adc_MHz, state, reset, is_half, trigger)
 case(state)
@@ -415,7 +418,7 @@ case(state)
 			// reset control counter	
 	begin	
 		if (trigger == 1'b1) state_next = 3'h4; // we reached trigger point
-		else state_next = 3'h3;
+		else state_next = 3'h3;// else if (!trig_mode) something
 	end
 	3'h4:	// control counter reset cleared
 	begin	
@@ -431,6 +434,7 @@ case(state)
 		state_next = 3'h0; // end of acquisition
 	end	
 endcase		
+
 // state output to registers
 always@(posedge adc_MHz)
 case(state)
