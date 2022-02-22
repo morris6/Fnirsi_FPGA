@@ -29,9 +29,8 @@ As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.
 This code is taking care of crossing clock domains, mcu <-> fpga, by
 double buffering i_mcu_clk signal.
 
-Sofar only buffers for channel 1, channel 2 reads constant midway value.
 Needs completion of logics for trigger conditions.
-
+Auto - Normal / Single trigger mode not yet functional
 *****************************************************************************/
   
 // command and bidirectional data register
@@ -356,33 +355,8 @@ assign triggerA = (trig_edge)?
 assign triggerB = (trig_edge)?
 	previousB & !presentB : !previousB & presentB;
 		
-// rising or falling? remember A or B until end of acquisition
-// for this triggerA and triggerB must be changed to reg, not wire
-// trigger must be tested while in state3, not earlier
-/*always@(posedge adc_rate, negedge trig_en)
-begin
-	if(!trig_en)
-		begin
-			triggerA <= 1'b0; // clear trigger
-			triggerB <= 1'b0;			
-		end
-	else		
-		begin
-			if(trig_edge)	// falling edge		
-				begin			
-					if(!previousA & presentA) triggerA <= 1'b1;		
-					if(!previousB & presentB) triggerB <= 1'b1;					
-				end
-			else				
-				begin		// rising edge		
-					if(previousA & !presentA) triggerA <= 1'b1;		
-					if(previousB & !presentB) triggerB <= 1'b1;					
-				end					
-		end
-end*/
-
 // trigger signal is used in state machine	
-assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
+assign trigger = trig_en | triggerA | triggerB;
 
 //----------------------------------------------------------------------------
 // state machine--------------------------------------------------------------
@@ -390,43 +364,43 @@ assign trigger = trig_en | triggerA | triggerB; // ?? trig_en ??
 // state register
 reg		[2:0]	state	= 3'h0;
 reg		[2:0]	state_next;
+
 // write enable for buffer memories
 reg				buf_wen;
 // addr_clk controlled by state0
 assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
 
 // state logic
-always@(adc_MHz, state, reset, is_half, trigger)
+always@(adc_MHz, state, reset, is_half, trigger, trig_mode)
 case(state)
 	3'h0:	// during this state the mcu can read buffers	
 	begin	
-		if (reset == 1'b1) state_next = 3'h1; // prepare
+		if (reset) state_next = 3'h1; // prepare
 		else state_next = 3'h0;		
 	end	
 	3'h1:	// buffers write enabled, ready flags cleared	
 			// acquisition start, control counter reset cleared	
 	begin	
-		if (reset == 1'b0) state_next = 3'h2; // start acquisition		
+		if (!reset) state_next = 3'h2; // start acquisition		
 		else state_next = 3'h1;
 	end	
 	3'h2:	// waiting for first half buffer full	
 	begin	
-		if (is_half == 1'b1) state_next = 3'h3;	 //	is_half
+		if (is_half) state_next = 3'h3;	 //	is_half
 		else state_next = 3'h2;	
 	end		
 	3'h3:	// waiting for trigger, circular buffer continues filling	
-			// reset control counter	
 	begin	
-		if (trigger == 1'b1) state_next = 3'h4; // we reached trigger point
-		else state_next = 3'h3;// else if (!trig_mode) something
+		if (trigger) state_next = 3'h4;	
+		else state_next = 3'h3;
 	end
-	3'h4:	// control counter reset cleared
+	3'h4:	// reset control counter
 	begin	
 		state_next = 3'h5;	
 	end	
-	3'h5:	// waiting for second half buffer full 
+	3'h5:	// control counter reset cleared 
 	begin	
-		if (is_half == 1'b1) state_next = 3'h6; // control is counting	
+		if (is_half) state_next = 3'h6;	
 		else state_next = 3'h5;	
 	end	
 	3'h6:	// set acq_done registers, reset flag, stop writing buffer
@@ -452,11 +426,17 @@ case(state)
 	begin
 		half_reset <= 1'b0; // control counter starts	
 	end
-	3'h3: // reset control counter	
+	3'h3: // waiting for trigger, or is_half in auto mode
 	begin	
-		half_reset <= 1'b1; // control counter reset to 0
+		half_reset <= 1'b1; // control counter reset	
+		acq_done[1] <= (triggerA); // which one?
+		acq_done[2] <= (triggerB); // which one?
 	end		
-	3'h4: // control counter starts
+	3'h4: // triggerpoint found
+	begin	
+		half_reset <= 1'b1; // control counter reset
+	end		
+	3'h5: // control counter starts
 	begin	
 		half_reset <= 1'b0; // control counter starts
 	end		
@@ -465,8 +445,6 @@ case(state)
 		buf_wen <= 1'b0;    	// disable further writing to buffers		
 		ready <= 1'b0;      	// flag reset		
 		acq_done[0] <= 1'b1;	// acquisition done		
-		acq_done[1] <= (triggerA); // which one?
-		acq_done[2] <= (triggerB); // which one?
 	end
 endcase		
 
@@ -515,5 +493,5 @@ assign o_adc_enc		= (triggerA); // debug signal,
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (trig_chan)? 1'b0 : 1'b1; // debug led
+assign o_led_red 	= (trig_mode)? 1'b0 : 1'b1; // debug led
 endmodule
