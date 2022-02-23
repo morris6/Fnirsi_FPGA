@@ -29,8 +29,6 @@ As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.
 This code is taking care of crossing clock domains, mcu <-> fpga, by
 double buffering i_mcu_clk signal.
 
-Needs completion of logics for trigger conditions.
-Auto - Normal / Single trigger mode not yet functional
 *****************************************************************************/
   
 // command and bidirectional data register
