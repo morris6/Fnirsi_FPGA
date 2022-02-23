@@ -1,5 +1,5 @@
 /*****************************************************************************
-			Debug version Scope15.v
+			Debug version Scope17.v
 			
 As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.					
 *****************************************************************************/
@@ -315,16 +315,29 @@ always@(posedge addr_clk)
 begin
 	addr <= addr + 1;
 end
-// control counter, half length of address counter
-reg				half_reset;
+// control counter
+reg				control_reset;
 wire				is_half;
-reg		[10:0]	half;
-always@(posedge addr_clk, posedge half_reset)
+wire				auto_end;
+reg		[12:0]	control;
+always@(posedge addr_clk, posedge control_reset)
 begin
-	if(half_reset) half <= 11'b0; // reset
-	else half <= half + 1;
+	if(control_reset) control <= 12'b0; // reset
+	else control <= control + 1;
 end
-assign is_half	= (&half); // 2047 11'h7FF
+assign is_half	= (control[11]); // 2048
+assign auto_end	= (!trig_mode & control[12]); // 4096
+
+// after counter
+reg				after_reset;
+wire				after_end;
+reg		[11:0]	after;
+always@(posedge addr_clk, posedge after_reset)
+begin
+	if(after_reset) after <= 12'b0; // reset
+	else after = after + 1;
+end	
+assign after_end = (after[11]);
 
 // -------------------------trigger------------------------------------------
 wire		[7:0]	adcA;	   // channel multiplexed
@@ -356,7 +369,7 @@ assign triggerB = (trig_edge)?
 	previousB & !presentB : !previousB & presentB;
 		
 // trigger signal is used in state machine	
-assign trigger = trig_en | triggerA | triggerB;
+assign trigger = trig_en | triggerA | triggerB | auto_end;
 
 //----------------------------------------------------------------------------
 // state machine--------------------------------------------------------------
@@ -371,7 +384,7 @@ reg				buf_wen;
 assign addr_clk	= ( state == 3'h0 )? data_index[0] : adc_rate;
 
 // state logic
-always@(adc_MHz, state, reset, is_half, trigger, trig_mode)
+always@(adc_MHz, state, reset, is_half, trigger, after_end)
 case(state)
 	3'h0:	// during this state the mcu can read buffers	
 	begin	
@@ -394,13 +407,13 @@ case(state)
 		if (trigger) state_next = 3'h4;	
 		else state_next = 3'h3;
 	end
-	3'h4:	// reset control counter
+	3'h4:	
 	begin	
 		state_next = 3'h5;	
 	end	
 	3'h5:	// control counter reset cleared 
 	begin	
-		if (is_half) state_next = 3'h6;	
+		if (after_end) state_next = 3'h6;	
 		else state_next = 3'h5;	
 	end	
 	3'h6:	// set acq_done registers, reset flag, stop writing buffer
@@ -414,7 +427,8 @@ always@(posedge adc_MHz)
 case(state)
 	3'h0:	
 	begin
-		half_reset <= 1'b1; // control counter reset to 0	
+		control_reset <= 1'b1; // control counter reset	
+		after_reset <= 1'b1; // auto counter reset	
 	end
 	3'h1:	
 	begin
@@ -424,21 +438,20 @@ case(state)
 	end
 	3'h2:
 	begin
-		half_reset <= 1'b0; // control counter starts	
+		control_reset <= 1'b0; // control counter starts	
 	end
 	3'h3: // waiting for trigger, or is_half in auto mode
 	begin	
-		half_reset <= 1'b1; // control counter reset	
 		acq_done[1] <= (triggerA); // which one?
 		acq_done[2] <= (triggerB); // which one?
 	end		
-	3'h4: // triggerpoint found
+	3'h4: // empty state, after counter starts
 	begin	
-		half_reset <= 1'b1; // control counter reset
+		after_reset <= 1'b0; // after counter starts
 	end		
-	3'h5: // control counter starts
+	3'h5: // after counter starts
 	begin	
-		half_reset <= 1'b0; // control counter starts
+		after_reset <= 1'b0; // extra, it matters! (?)
 	end		
 	3'h6: // acquisition completed	
 	begin
@@ -489,7 +502,7 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= (triggerA); // debug signal,
+assign o_adc_enc		= (trigger); // debug signal,
 // for debug, state waiting for acquire
 assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
