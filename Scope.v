@@ -1,22 +1,27 @@
 /*****************************************************************************
-			Debug version Scope17.v
+			Debug version Scope20
 			
-As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.					
+As far as wanted / needed for replicating the FPGA for Fnirsi-1013D.			
+This version	has non interleaved buffer read-out.			
 *****************************************************************************/
 // these functions are implemented sofar:
 // command	0x01,  1, reset acquisition system
 // command	0x05,  5, wait until reset ready, read by mcu
-// command 	0x06,  6, fpga ident 0x1432, 5470
+// command 	0x06,  6, fpga ident 0x1432, 5470, read by mcu
 // command	0x0A, 10, wait until acquisition complete, read by mcu
 // command	0x0D, 13, sample rate, with interleaved A and B channel
 // command 	0x0E, 14, multiple byte debug
 // command	0x0F, 15, trigger enable
+// command	0x14, 20, trigger point read by mcu
 // command	0x15, 21, trigger channel
 // command	0x16, 22, trigger edge
 // command	0x17, 23, trigger level
 // command	0x1A, 26, trigger mode
-// command	0x20, 32, mcu read buffer adc's channel 1
-// command	0x22, 34, mcu read buffer adc's channel 2
+// command	0x1F, 31, mcu sets read point
+// command	0x20, 32, mcu read buffer adc's channel 1A
+// command	0x21, 33, mcu read buffer adc's channel 1B
+// command	0x22, 34, mcu read buffer adc's channel 2A
+// command	0x23, 35, mcu read buffer adc's channel 2B
 // command	0x32, 50, offset channel 1
 // command 	0x33, 51, relay control channel 1
 // 			0x34, 52, ac/dc control channel 1
@@ -52,7 +57,6 @@ double buffering i_mcu_clk signal.
 
 // the adc's are hardware pin selected to have A and B data aligned.
 // channel buffer is 2 x 8 bits wide, 4096 deep.
-// read back by mcu alternates between A and B, total 8192 bytes.
 //  
 // this is the top module, connecting to fpga pin connections.
 
@@ -115,6 +119,8 @@ reg		[7:0]	sample_rate_byte[3:0];
 reg		[7:0]	multi[3:0];		// debug write and readback
 // command 0x0F,15 trigger enable
 reg				trig_en;			// 0- enabled, 1- disabled
+// command 0x14,20 trigger point
+reg		[7:0]	trig_point[1:0];
 // command 0x15,21 trigger channel
 reg				trig_chan;		// 0- channel 1, 1- channel 2
 // command 0x16,22 trigger edge
@@ -123,10 +129,12 @@ reg				trig_edge;		// 0- rising, 1- falling
 reg		[7:0]	trig_level;		// 0 - 255
 // command 0x1A,26 trigger mode
 reg				trig_mode;		// 0- auto, 1- normal/single
-// command 0x20,32 read buffer adc's channel 1
-reg				read_buf1;
-// command 0x22,32 read buffer adc's channel 2
-reg				read_buf2;
+// command 0x1F,31 read point
+reg		[7:0]	read_point_byte[1:0];	// 16 bit pointer
+// command 0x20,32 read buffer adc's channel 1A
+// command 0x21,33 read buffer adc's channel 1B
+// command 0x22,32 read buffer adc's channel 2A
+// command 0x23,33 read buffer adc's channel 2B
 // command 0x32,50 offset channel 1
 reg		[7:0]	offset_1_byte[1:0];
 // command 0x33,51 relay control channel 1
@@ -147,16 +155,12 @@ wire		[7:0]	doA_1;
 wire		[7:0]	doB_1;
 wire		[7:0]	doA_2;
 wire		[7:0]	doB_2;
-// prepare data stream for reading by mcu 
-wire		[7:0]	data_stream1;
-assign	data_stream1			= (!data_index[0])? doA_1 : doB_1;
-wire		[7:0]	data_stream2;
-assign	data_stream2			= (!data_index[0])? doA_2 : doB_2;
 
 // nets for combining data bytes to multi byte registers
 wire		[23:0]	sample_rate;
 wire		[15:0]	offset_1;
 wire		[15:0]	offset_2;
+wire		[15:0]	read_point;
 
 // assign sample_rate[31:24]	= sample_rate_byte[0]; // not used
 assign	sample_rate[23:16]	= sample_rate_byte[1];
@@ -166,6 +170,8 @@ assign	offset_1[15:8]		= offset_1_byte[0];
 assign	offset_1[7:0]		= offset_1_byte[1];
 assign	offset_2[15:8]		= offset_2_byte[0];
 assign	offset_2[7:0]		= offset_2_byte[1];
+assign	read_point[15:8]		= read_point_byte[0];
+assign	read_point[7:0]		= read_point_byte[1];
 
 // data_out is high Z during i_mcu_rws, during write
 assign 	io_mcu_d = i_mcu_rws? 8'bZ : data_out;
@@ -211,6 +217,8 @@ case(command)
 	8'h17:	trig_level <= io_mcu_d; // 23d
 // for command 0x1A, trigger mode
 	8'h1A:	trig_mode <= io_mcu_d[0]; // 26d
+// for command 0x1F, read_index	
+	8'h1F:	read_point_byte[data_index] <= io_mcu_d;
 // for command 0x32 or 0x35, offset
 	8'h32:  offset_1_byte[data_index] <= io_mcu_d; // 50d		
 	8'h35:  offset_2_byte[data_index] <= io_mcu_d; // 53d		
@@ -235,9 +243,13 @@ case(command)
 			if(data_index == 0) data_out <= 8'h14; // 5170 decimal		
 			else if 	(data_index == 1) data_out <= 8'h32;
 		end			
-// for command 0x20, 22			
-	8'h20:	data_out <= data_stream1; // interleaved A and B data
-	8'h22:	data_out <= data_stream2; 
+// for command 0x14, trigger info		
+	8'h14:	data_out <= 	trig_point[data_index];		
+// for command 0x20, 21, 22 and 23			
+	8'h20:	data_out <= doA_1; // A data
+	8'h21:	data_out <= doB_1; // B data
+	8'h22:	data_out <= doA_2;	
+	8'h23:	data_out <= doB_2; 
 endcase		
 		
 // relay decoder
@@ -500,9 +512,9 @@ end
 
 // ---------------------------------------------------------------------------
 // for debug, adc enc signal on extra pin
-assign o_adc_enc		= (trigger); // debug signal,
+//assign o_adc_enc		= (trigger); // debug signal,
 // for debug, state waiting for acquire
-assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
+//assign o_led_green  	= (state == 3'h0)? 1'b0 : 1'b1; // debug led
 // for debug, state waiting for trigger
-assign o_led_red 	= (trig_mode)? 1'b0 : 1'b1; // debug led
+//assign o_led_red 	= (trig_mode)? 1'b0 : 1'b1; // debug led
 endmodule
