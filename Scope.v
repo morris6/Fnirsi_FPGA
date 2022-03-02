@@ -237,7 +237,7 @@ always@(posedge data_read_str)
 case(command)
 	8'h05:	data_out <= ready; // reset ready
 	8'h0A:	data_out <= acq_done; // acquisition ready
-	8'h0E:	data_out <= multi[data_index]; // 14d read debug
+	8'h0E:	data_out <= multi[data_index]; // read debug
 	8'h06: // for command 0x06, fpga ident..?			
 		begin
 			if(data_index == 0) data_out <= 8'h14; // 5170 decimal		
@@ -259,7 +259,7 @@ assign o_relay1_3	= !relay_ch1[2];
 assign o_relay2_1	=  relay_ch2[0];
 assign o_relay2_2	= !relay_ch2[1];
 assign o_relay2_3	= !relay_ch2[2];
-// ac / dc switch signal
+// ac / dc switch signalperformance
 assign o_ac_dc_1		=  ac_dc_1;
 assign o_ac_dc_2		=  ac_dc_2;
 
@@ -443,7 +443,9 @@ case(state)
 	3'h1:	
 	begin
 		buf_wen <= 1'b1;    // buffers are write enable
-		acq_done <= 3'b000; // clear the ready and trigger match flags	
+		acq_done <= 3'b000; // clear the ready and trigger match flags		
+		trig_point[1] <= 8'h20; // set trigger point info, fixed		
+		trig_point[0] <= 8'h96;	
 		ready <= 1'b1; // set ready flag
 	end
 	3'h2:
