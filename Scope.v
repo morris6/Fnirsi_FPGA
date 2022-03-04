@@ -444,8 +444,8 @@ case(state)
 	begin
 		buf_wen <= 1'b1;    // buffers are write enable
 		acq_done <= 3'b000; // clear the ready and trigger match flags		
-		trig_point[1] <= 8'h20; // set trigger point info, fixed		
-		trig_point[0] <= 8'h96;	
+		trig_point[1] <= 8'h08; // set trigger point info
+		trig_point[0] <= 8'h00;	
 		ready <= 1'b1; // set ready flag
 	end
 	3'h2:
